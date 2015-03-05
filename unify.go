@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"github.com/influx6/evroll"
+	"github.com/influx6/goutils"
 	"log"
 	"net/http"
 	"net/url"
@@ -22,14 +24,21 @@ type JSONReply struct {
 
 type RequestGlass interface {
 	Write(data interface{})
+	End()
 	GetMeta() map[string]interface{}
+	Reader() *evroll.Streams
+	Writer() *evroll.Streams
+	IsStream() bool
 	Init()
 }
 
 type RequestMirror struct {
-	res  http.ResponseWriter
-	req  *http.Request
-	Meta map[string]interface{}
+	res       http.ResponseWriter
+	req       *http.Request
+	Meta      map[string]interface{}
+	InStream  *evroll.Streams
+	OutStream *evroll.Streams
+	Streamer  bool
 }
 
 type WebSocketMirror struct {
@@ -49,14 +58,35 @@ type JsonMirror struct {
 	Procotol     map[string]bool
 }
 
-func (r *RequestMirror) GetMeta() map[string]interface{} {
-	return r.Meta
-}
-
 type Unified struct {
 	Protocols map[string]bool
 	Meta      map[string]interface{}
 	Glass     RequestGlass
+}
+
+type RequestData struct {
+	Form     interface{}
+	PostForm interface{}
+}
+
+func (r *RequestMirror) GetMeta() map[string]interface{} {
+	return r.Meta
+}
+
+func (r *RequestMirror) IsStream() bool {
+	return r.Streamer
+}
+
+func (r *RequestMirror) Reader() *evroll.Streams {
+	return r.InStream
+}
+
+func (r *RequestMirror) Writer() *evroll.Streams {
+	return r.OutStream
+}
+
+func (r *Unified) IsStream() bool {
+	return r.Glass.IsStream()
 }
 
 func (r *Unified) Init() {
@@ -65,6 +95,10 @@ func (r *Unified) Init() {
 
 func (r *Unified) Write(w interface{}) {
 	r.Glass.Write(w)
+}
+
+func (r *Unified) End() {
+	r.Glass.End()
 }
 
 type Unify struct {
@@ -76,6 +110,10 @@ type Unify struct {
 func (r *JsonMirror) Init() {}
 
 func (r *JsonMirror) Write(data interface{}) {
+	r.OutStream.Send(data)
+}
+
+func (r *JsonMirror) End() {
 	reply := new(JSONReply)
 	proc := []string{}
 
@@ -86,7 +124,20 @@ func (r *JsonMirror) Write(data interface{}) {
 	}
 
 	reply.Upgrades = proc
-	reply.Payload = data
+
+	data, ok := r.OutStream.Buffer.Obj().([]interface{})
+
+	if !ok {
+		reply.Payload = data
+	} else {
+		if len(data) == 1 {
+			reply.Payload = data[0]
+		} else {
+			reply.Payload = data
+		}
+	}
+
+	r.OutStream.Buffer.Clear()
 
 	buff, err := json.Marshal(reply)
 
@@ -130,18 +181,61 @@ func (r *XHRMirror) Init() {
 	} else {
 		r.res.Header().Set("Access-Control-Allow-Origin", "*")
 	}
+
+	content, ok := r.req.Header["Content-Type"]
+	muxcontent := strings.Join(content, ";")
+	wind := strings.Index(muxcontent, "application/x-www-form-urlencode")
+	mind := strings.Index(muxcontent, "multipart/form-data")
+
+	if ok {
+
+		if wind != -1 {
+			if err := r.req.ParseForm(); err != nil {
+				log.Println(err)
+			} else {
+				r.InStream.Send(&RequestData{r.req.Form, r.req.PostForm})
+			}
+		}
+
+		if mind != -1 {
+			if err := r.req.ParseMultipartForm(32 << 20); err != nil {
+				log.Println(err)
+			} else {
+				r.InStream.Send(&RequestData{r.req.MultipartForm.Value, r.req.MultipartForm.File})
+			}
+		}
+	}
+}
+
+func (r *XHRMirror) End() {
+	proc := []string{}
+
+	for key, _ := range r.Procotol {
+		if key != "jsonp" {
+			proc = append(proc, key)
+		}
+	}
+
+	buffer := []byte{}
+
+	r.Writer().Receive(func(d interface{}) {
+		bits := goutils.MorphByte.Morph(d)
+		buffer = append(buffer, bits...)
+	})
+	r.Writer().Stream()
+
+	// r.res.Header().Set("Content-Type", "charset=utf-8")
+	r.res.Header().Set("Content-Length", fmt.Sprint(len(buffer)))
+	r.res.WriteHeader(200)
+	r.res.Write(buffer)
 }
 
 func (r *XHRMirror) Write(data interface{}) {
-	//convert to byte[] array
-	fmt.Println("xhr writing")
-	buffer, ok := data.([]byte)
+	r.OutStream.Send(data)
+}
 
-	if !ok {
-		return
-	}
+func (r *WebSocketMirror) End() {
 
-	r.res.Write(buffer)
 }
 
 func (r *WebSocketMirror) Init() {
@@ -198,7 +292,7 @@ func IsWebSocketRequest(r *http.Request) bool {
 }
 
 func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestGlass {
-	reqmirror := &RequestMirror{rw, r, make(map[string]interface{})}
+	reqmirror := &RequestMirror{rw, r, make(map[string]interface{}), evroll.NewStream(false), evroll.NewStream(false), false}
 	query, _ := url.ParseQuery(r.URL.RawQuery)
 	cbName := "callback"
 
@@ -210,6 +304,7 @@ func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestG
 				}
 			}
 		}
+		reqmirror.Streamer = true
 		return RequestGlass(&WebSocketMirror{reqmirror, u.Protocols, nil})
 	}
 
@@ -223,10 +318,12 @@ func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestG
 		}
 		jscall, okc := query[cbName]
 		if okc {
+			reqmirror.Streamer = false
 			return RequestGlass(&JsonMirror{reqmirror, jscall[0], u.Protocols})
 		}
 	}
 
+	reqmirror.Streamer = true
 	return RequestGlass(&XHRMirror{reqmirror, u.Protocols})
 }
 

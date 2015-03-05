@@ -15,6 +15,7 @@ func main() {
 	unit := unify.CreateUnify(func(conn *unify.Unified) {
 		fmt.Println("new connection:", conn, conn.Glass, conn.Glass.GetMeta())
 		conn.Write("welcome!")
+		conn.End()
 	}, []string{"xhr", "jsonp", "websocket"})
 
 	app := webgrid.NewHttp()
