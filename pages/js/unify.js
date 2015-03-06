@@ -4,9 +4,16 @@ var _ = require("stackq");
 var domain = module.exports = {};
 
 domain.Requests = _.Checker({
-  url: _.valids.String,
   fn: _.valids.Function,
-})
+  path: _.valids.String,
+  //includes the not required but standard pieces
+  scheme: _.funcs.maybe(_.valids.String),
+  headers: _.funcs.maybe(_.valids.Object),
+  binary: _.funcs.maybe(_.valids.Boolean),
+  port: _.funcs.maybe(_.valids.String),
+  type: _.funcs.maybe(_.valids.String),
+  host: _.funcs.maybe(_.valids.String),
+});
 
 },{"stackq":6}],2:[function(require,module,exports){
 module.exports = (function(core){
@@ -5367,7 +5374,7 @@ module.exports = (function(core){
   var classSig = core.Util.guid();
 
   core.Class = (function(){
-    
+
     return function(attr,static,_super){
 
       var spid = core.Util.guid();
@@ -5586,7 +5593,7 @@ module.exports = (function(core){
     };
   }).call(this);
 
-  
+
   core.analyzeURI = function(pattern){
     if(valids.not.String(pattern)) return;
     var hasQuery = pattern.indexOf('?') != -1 ? true : false;
@@ -5667,8 +5674,8 @@ module.exports = (function(core){
     clone: function(){
       return core.Util.clone(this.registry);
     },
-    each: function(fn,fnc){
-      return core.enums.each(this.registry,fn,fnc);
+    each: function(fn,fnc,ctx){
+      return core.enums.each(this.registry,fn,fnc,ctx);
     },
     share: function(fs){
       if(!core.FunctionStore.isInstance(fs)) return;
@@ -5750,7 +5757,6 @@ module.exports = (function(core){
     unregister: function(){ return this.remove.apply(this,arguments); },
   });
 
-
   core.Hooks = core.Class({
     init: function(id){
       this.id = id;
@@ -5759,10 +5765,21 @@ module.exports = (function(core){
       this.after = core.Mutator();
 
       this.setUpBefore = this.$bind(function(){
-        this.before.addDone(this.in.fire);
+        // this.before.addDone(this.in.fire);
+        var self = this;
+        this.before.addDone(function(){
+            var args = core.enums.toArray(arguments);
+            self.in.fireWith(this,args);
+        });
       });
+
       this.setUpAfter = this.$bind(function(){
-        this.in.addDone(this.after.fire);
+        // this.in.addDone(this.after.fire);
+        var self = this;
+        this.in.addDone(function(){
+            var args = core.enums.toArray(arguments);
+            self.after.fireWith(this,args);
+        });
       });
 
       this.setUp = this.$bind(function(){
@@ -6387,7 +6404,7 @@ module.exports = (function(core){
         this.status = "uncompleted";
         var completed = core.Switch(),cargs,isError = false;
         this.___cargs = cargs;
-  
+
         this.pub('error');
         this.pub('success');
 
@@ -6481,7 +6498,7 @@ module.exports = (function(core){
                 ise = true;
                 res = e;
               };
-              
+
               if(ise) then = core.Future.value(res);
               else{
                 if(core.valids.notExists(res)) return this;
@@ -7619,10 +7636,10 @@ module.exports = (function(core){
       });
     }
   });
-  
+
   core.Chain = function(fx){
     return core.Mask(function(){
-      
+
       var stack = [];
 
       this.secure('out',function(){
@@ -7636,7 +7653,7 @@ module.exports = (function(core){
         var args = core.enums.rest(arguments);
         stack.push({op:tag, args: args});
       });
-    
+
     });
   };
 
@@ -7666,8 +7683,8 @@ module.exports = (function(core){
     },
     unwhere: function(tag){
       var fn = this.mutators.get(tag);
-      if(core.valids.isFunction(fn)){ 
-        this.mux.remove(fn.mutator); 
+      if(core.valids.isFunction(fn)){
+        this.mux.remove(fn.mutator);
       }
     },
     chain: function(fn){
@@ -7695,7 +7712,7 @@ module.exports = (function(core){
      return it.next();
     },
   });
-  
+
   core.SequenceFuture = core.Future.extends({
     init: function(seq){
       if(core.valids.exists(seq)){
@@ -7940,7 +7957,7 @@ module.exports = (function(core){
     toObject: function(){
       if(core.valids.Object(this.data)) return this.data;
       var mp = core.Sequence.value({});
-      this.each(function(v,k,fx){ 
+      this.each(function(v,k,fx){
         mp.data[k] = v;
         fx();
       });
@@ -7985,7 +8002,7 @@ module.exports = (function(core){
       // this.core = co;
       var self = this;
       this.$unsecure('exposeBy',function(fx){
-        if(core.valids.exists(self.getCore()) && core.valids.Function(fx)) 
+        if(core.valids.exists(self.getCore()) && core.valids.Function(fx))
           return fx.call(self,self.getCore());
       });
     },
@@ -8168,17 +8185,17 @@ module.exports = (function(core){
     shift: function(){
       core.Asserted(false,'implement each detail in child');
     },
-    each: function(fn,fc){ 
-      return this.eachGenerator(fn,fc,this.getIterator()); 
+    each: function(fn,fc){
+      return this.eachGenerator(fn,fc,this.getIterator());
     },
-    eachReverse: function(fn,fc){ 
-      return this.eachGenerator(fn,fc,this.getReverseIterator()); 
+    eachReverse: function(fn,fc){
+      return this.eachGenerator(fn,fc,this.getReverseIterator());
     },
-    eachSkip: function(fn,fc,count,nonstop){ 
-      return this.eachGenerator(fn,fc,this.getSkipIterator(count,nonstop)); 
+    eachSkip: function(fn,fc,count,nonstop){
+      return this.eachGenerator(fn,fc,this.getSkipIterator(count,nonstop));
     },
-    eachSkipReverse: function(fn,fc,count,nonstop){ 
-      return this.eachGenerator(fn,fc,this.getSkipReverseIterator(count,nonstop)); 
+    eachSkipReverse: function(fn,fc,count,nonstop){
+      return this.eachGenerator(fn,fc,this.getSkipReverseIterator(count,nonstop));
     },
   },{
     value: function(n){
@@ -8485,7 +8502,7 @@ module.exports = (function(core){
     detransformMutates: function(seq,isList){
       if(!core.Sequence.instanceBelongs(seq)) return;
       var detrans = function(v,k){
-        if(core.Immutate.instanceBelongs(v)) 
+        if(core.Immutate.instanceBelongs(v))
           return v.ghost().toJS();
         if(core.Cursor.instanceBelongs(v)){
           return v.toJS();
@@ -8559,7 +8576,7 @@ module.exports = (function(core){
     toObject: function(fn){
       core.Asserted(false,'implement this detail in child');
     },
-    _prepData: function(){ 
+    _prepData: function(){
       core.Asserted(false,'implement this detail in child');
     },
     _prepClone: function(f){
@@ -8574,7 +8591,7 @@ module.exports = (function(core){
       var addr = f.split('.'),
           first = core.enums.first(addr),
           rest = core.enums.rest(addr)
-      
+
       if(!this.has(first)) return false;
 
       var current = this.getCore();
@@ -8589,7 +8606,7 @@ module.exports = (function(core){
       var addr = f.split('.'),
           first = core.enums.first(addr),
           current = this.getCore();
-    
+
       if(core.valids.not.exists(current)) return;
 
       return current.hasKey(first);
@@ -8618,9 +8635,9 @@ module.exports = (function(core){
          snap = snap.snapshot(rest.join('.'),null,fne);
         }
       }
-  
+
       if(snap && core.valids.Function(fn)){
-        return fn.call(snap,snap) || snap; 
+        return fn.call(snap,snap) || snap;
       }
 
       return snap;
@@ -8629,7 +8646,7 @@ module.exports = (function(core){
       return this.snapshot(f,function(){
         var val = this.value();
         return fx(val) || val;
-      }); 
+      });
     },
     value: function(){
       return this.toJS();
@@ -8640,10 +8657,10 @@ module.exports = (function(core){
     deleteWhen: function(f,a){
       core.Asserted(false,'implement this detail in child');
     },
-    set: function(){ 
+    set: function(){
       core.Asserted(false,'implement this detail in child');
     },
-    toJS: function(){ 
+    toJS: function(){
       core.Asserted(false,'implement this detail in child');
     },
     newSequence: function(fx){
@@ -8651,7 +8668,7 @@ module.exports = (function(core){
       var oldData = this._prepClone(this.value());
       var cloneData = this._prepClone(oldData);
       var newData = fx(cloneData) || oldData;
-      
+
       var jsonIS = (core.Util.toJSON(newData) === core.Util.toJSON(oldData));
       var plainIS = (newData === oldData);
 
@@ -8661,7 +8678,7 @@ module.exports = (function(core){
       if(core.valids.Primitive(oldData)){
         if(plainIS) return this;
       };
-      
+
       var seq = this._prepData(newData);
       this.box.push(seq);
       this.emit('newSequence',this);
@@ -8671,9 +8688,9 @@ module.exports = (function(core){
     value: function(im,val,asVal){
       core.Asserted(core.Immutate.instanceBelongs(im),'must be an immutate instance');
       if(core.ImmutateCursor.instanceBelongs(val)) return val;
-      if(core.valids.Null(val) || core.valids.Undefined(val) || core.valids.Primitive(val)) 
+      if(core.valids.Null(val) || core.valids.Undefined(val) || core.valids.Primitive(val))
         return core.ValueCursor.make.apply(core.ValueCursor,arguments);
-      if(asVal || val.unImmutable) 
+      if(asVal || val.unImmutable)
         return core.ValueCursor.make.apply(core.ValueCursor,arguments);
       if(core.valids.Collection(val)){
         return core.CollectionCursor.value.apply(core.CollectionCursor,arguments);
@@ -8699,10 +8716,10 @@ module.exports = (function(core){
     set: function(f){
       return this.newSequence(function(r){ return f; });
     },
-    snapshot: function(addr,fn){ 
-      // // return this; 
+    snapshot: function(addr,fn){
+      // // return this;
       // if(core.valids.Function(fn)){
-      //   return fn.call(this,this) || this; 
+      //   return fn.call(this,this) || this;
       // }
       return this;
     },
@@ -8851,14 +8868,14 @@ module.exports = (function(core){
       this.imRoot = root;
       this.addr = addr;
       this.dead = core.Switch();
-    
+
       var self = this,seq;
 
       this.$unsecure('seq',function(){
          if(this.dead.isOn()) return null;
          return seq;
       });
-  
+
       this.$secure('wrapNewSequence',function(){
          var f = this.wrapUpdate();
          this.emit('newSequence',f);
@@ -8906,7 +8923,7 @@ module.exports = (function(core){
 
       this.imRoot.after('newSequence',this.wrapNewSequence);
       this.imRoot.after('reSequence',this.wrapResequence);
-    
+
       if(core.valids.Function(fx)) fx.call(this);
     },
     isValueCursor: function(){ return this.seq().isValueCursor(); },
@@ -8991,8 +9008,8 @@ module.exports = (function(core){
           // };
 
           var tag = core.valids.Primitive(map[i]) ? map : map[i];
-          return e.is(tag,function(s,r){ 
-            if(r) reports.push({state: s, err: r, target: i}); 
+          return e.is(tag,function(s,r){
+            if(r) reports.push({state: s, err: r, target: i});
             if(!s) fx(core.Checker.Invalid(i,map));
             fx(null);
             return ix.next();
@@ -9025,7 +9042,7 @@ module.exports = (function(core){
       ix.next();
       return state;
     };
-    
+
     inst.is = function(map,fx){
       return inst(map,fx);
     };
@@ -9034,7 +9051,7 @@ module.exports = (function(core){
       return meta;
     };
 
-    core.Util.createProperty(inst,'hash',{ 
+    core.Util.createProperty(inst,'hash',{
       get: function(){ return checkerHash },
       set: function(){}
     });
@@ -9057,7 +9074,7 @@ module.exports = (function(core){
       }
       return state;
     };
-    
+
     mix.is = function(v,fx){
       var state = mix(v);
       if(core.valids.Function(fx)){
@@ -9083,7 +9100,7 @@ module.exports = (function(core){
       }
       return state;
     };
-    
+
     mix.is = function(v,fx){
       var state = mix(v);
       if(core.valids.Function(fx)){
@@ -9107,9 +9124,9 @@ module.exports = (function(core){
   };
 
   core.Checker.Invalid = function(name,target,meta){
-    return { 
-      key: name, 
-      message: core.Util.String(' ',name,'is invalid or missing with set conditions'), 
+    return {
+      key: name,
+      message: core.Util.String(' ',name,'is invalid or missing with set conditions'),
       target: target,
       meta: meta
     };
@@ -9136,34 +9153,25 @@ var win = global.window;
 var doc = win.document;
 
 
+
 var unify = _.Mask(function(){
 
     var uni = this, cbhash = 0x4ffa;
     var xhrgen;
 
-    var createJSON = function(map){
-        domain.Requests.is(map,function(state,report){
-            _.Asserted(state,"invalid map for connection: "+report);
-        });
+    var XHRMap = {
+        cors: false,
+        xdr: false,
+        ssl: false,
+        credentails: true,
+    };
 
-        var uri,cb,qs,script = doc.createElement("script");
-
-        if (qs){
-            qs = _.enums.map(map.headers,function(e,i,o){
-                return [i,e].join("=");
-            });
+    var createXDR = function(){
+        if(typeof global.XDomainRequest === "undefined" && typeof XDomainRequest === "undefined"){
+            return createXHR();
         }
-
-        rn = Math.floor(1 * Math.random(10));
-        sb = ["Callback",cbhash+=rn].join("");
-        cb = ["callback","=",sb].join("")
-        uri = [map.url,'?',qs,"&json=true&",cb];
-
-        script.src = uri.join("");
-        return {
-          script: script,
-          name: sb,
-          fn: map.fn
+        return function(){
+            return new XDomainRequest();
         };
     };
 
@@ -9205,6 +9213,7 @@ var unify = _.Mask(function(){
 
     this.Transport = _.Configurable.extends({
         init: function(map,upgradable){
+            map = _.Util.extends({},XHRMap,map);
             domain.Requests.is(map,function(state,report){
                 _.Asserted(state,_.Util.String(" ","invalid config properties for connection","\n",report));
             });
@@ -9215,9 +9224,26 @@ var unify = _.Mask(function(){
                 });
             }
 
-            this.upgradedFrom = upgradable;
+            var self = this;
             this.$super();
+
             this.heartBeat = 1000;
+            this.upgraded = upgradable;
+
+            this.hooks = _.Hooks.make("transport-hooks");
+            this.scheme = map.ssl ? "https" : "http";
+            this.port = (_.valids.not.contains(map,"port") ? (map.ssl ? 443 : (global.location.port ? global.location.port : 80)) : map.port);
+            this.host = (_.valids.not.contains(map,"host") ? global.location.hostname : map.host);
+            this.binary = (_.valids.not.contains(map,"binary") ? "application/octect-stream": "text/plain;charset=utf-8");
+            this.basetype = (_.valids.not.contains(map,"type") ? "x-www-form-urlencoded" : map.type);
+
+            this.$unsecure("makeURL",function(){
+                query = this.getConfigAttr("query");
+                var uri = (this.scheme + "://" + this.host +  ":" + this.port + "/" + this.map.path + "?" + query);
+                return uri;
+            });
+
+            this.headers = _.Store.make();
             this.map = map;
 
             //switches to allow connection to available upgrades
@@ -9242,77 +9268,119 @@ var unify = _.Mask(function(){
 
                 if(upgrades.indexOf("websocket") !== -1) this.socket.on();
                 else this.socket.off();
-
             });
+        },
+        Headers: function(map){
+          this.headers.addAll(map);
         },
         connect: function(){},
         disconnect: function(){},
         toXHR: function(map){
           if(!this.xhr.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.XHR.make(map,this);
+          return uni.XHRTransport.make(map,this);
         },
         toWebSocket: function(){
           if(!this.socket.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.WebSocket.make(map,this);
+          return uni.WebSocketTransport.make(map,this);
         },
         toJSON: function(){
           if(!this.json.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.JSON.make(map,this);
+          return uni.JSONTransport.make(map,this);
         },
     });
 
-    this.JSON = this.Transport.extends({
+    this.JSONTransport = this.Transport.extends({
       init: function(map,t){
-        this.$super(map,t);
+            this.$super(map,t);
 
-        this.$secure("handleReply",function(data){
-            console.log("got reply:",data);
-            var upgrades = data.Upgrades,
-                payload = data.Payload;
+            var self = this;
+            var rn = Math.floor(1 * Math.random(10));
 
-            var fn = this.getConfigAttr("fn");
+            this.__cbName = ["__Callback",cbhash+=rn].join("");
 
-            this.__update(upgrades);
-            fn.call(null,payload);
-        });
+            this.config({
+               "prehead": ["json=true","callback="+this.__cbName]
+            });
 
-        var jsonConf = this.connector = createJSON(this.map);
-        this.config(jsonConf);
+            win[this.__cbName] = function(){
+              var args = _.enums.toArray(arguments);
+              self.handleReply.apply(self,args);
+            };
 
-        var self = this;
-        win[jsonConf.name] = function(){
-          var args = _.enums.toArray(arguments);
-          self.handleReply.apply(self,args);
-        };
+            this.$secure("handleReply",function(data){
+                var upgrades = data.Upgrades,
+                    payload = data.Payload;
+
+                this.__update(upgrades);
+                map.fn.call(null,payload);
+            });
+
+            this.hooks.addBefore(function(o){
+                var heads = [];
+                self.headers.each(function(e,i,o,fx){
+                    heads.push([i,e].join("="));
+                });
+
+                var prehead = this.getConfigAttr("prehead");
+                heads = heads.concat(prehead);
+
+                this.config({
+                    query: heads.join("&")
+                });
+            });
+
+
+            this.hooks.add(function(o){
+                o.src = this.makeURL();
+                doc.body.appendChild(o);
+            });
+
         },
         connect: function(){
-        doc.body.appendChild(this.connector.script);
+            this.hooks.distributeWith(this,[doc.createElement("script")]);
         },
         disconnect: function(){
-        doc.body.removeChild(this.connector.script);
-        delete win[this.getConfigAttr("name")]
+            doc.body.removeChild(this.connector.script);
+            delete win[this.__cbName];
         },
         toJSONP: function(){
-        return this;
+            return this;
         },
     });
 
-    this.XHR = this.Transport.extends({
+    this.XHRTransport = this.Transport.extends({
         init: function(map,t){
-        this.$super(map,t);
+            this.$super(map,t);
+
+            if(this.cors && this.xdr){
+              this.generator = createXDR()
+            }else{
+             this.generator = createXHR()
+            }
+
+            this.hooks.addBefore(function(o){
+                console.log("before hook:",o);
+            });
+            this.hooks.add(function(o){
+                console.log("in hook:",o);
+            });
+            this.hooks.addAfter(function(o){
+                console.log("after hook:",o);
+            });
         },
         connect: function(){
-
+            var req = this.generator();
+            this.hooks.emit(req);
         },
         disconnect: function(){
 
         },
     });
 
-    this.WebSocket = this.Transport.extends({
+    this.WebSocketTransport = this.Transport.extends({
         init: function(map,t){
         this.$super(map,t);
         },
@@ -9324,6 +9392,17 @@ var unify = _.Mask(function(){
         }
     });
 
+    this.unsecure("JSON",function(map){
+        return this.JSONTransport.make(map);
+    });
+
+    this.unsecure("Websocket",function(map){
+        return this.WebSocketTransport.make(map);
+    });
+
+    this.unsecure("XHR",function(map){
+        return this.XHRTransport.make(map);
+    });
 
     this.isTransport = _.Checker.Type(this.Transport.instanceBelongs);
 });

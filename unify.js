@@ -4,34 +4,25 @@ var win = global.window;
 var doc = win.document;
 
 
+
 var unify = _.Mask(function(){
 
     var uni = this, cbhash = 0x4ffa;
     var xhrgen;
 
-    var createJSON = function(map){
-        domain.Requests.is(map,function(state,report){
-            _.Asserted(state,"invalid map for connection: "+report);
-        });
+    var XHRMap = {
+        cors: false,
+        xdr: false,
+        ssl: false,
+        credentails: true,
+    };
 
-        var uri,cb,qs,script = doc.createElement("script");
-
-        if (qs){
-            qs = _.enums.map(map.headers,function(e,i,o){
-                return [i,e].join("=");
-            });
+    var createXDR = function(){
+        if(typeof global.XDomainRequest === "undefined" && typeof XDomainRequest === "undefined"){
+            return createXHR();
         }
-
-        rn = Math.floor(1 * Math.random(10));
-        sb = ["Callback",cbhash+=rn].join("");
-        cb = ["callback","=",sb].join("")
-        uri = [map.url,'?',qs,"&json=true&",cb];
-
-        script.src = uri.join("");
-        return {
-          script: script,
-          name: sb,
-          fn: map.fn
+        return function(){
+            return new XDomainRequest();
         };
     };
 
@@ -73,6 +64,7 @@ var unify = _.Mask(function(){
 
     this.Transport = _.Configurable.extends({
         init: function(map,upgradable){
+            map = _.Util.extends({},XHRMap,map);
             domain.Requests.is(map,function(state,report){
                 _.Asserted(state,_.Util.String(" ","invalid config properties for connection","\n",report));
             });
@@ -83,9 +75,26 @@ var unify = _.Mask(function(){
                 });
             }
 
-            this.upgradedFrom = upgradable;
+            var self = this;
             this.$super();
+
             this.heartBeat = 1000;
+            this.upgraded = upgradable;
+
+            this.hooks = _.Hooks.make("transport-hooks");
+            this.scheme = map.ssl ? "https" : "http";
+            this.port = (_.valids.not.contains(map,"port") ? (map.ssl ? 443 : (global.location.port ? global.location.port : 80)) : map.port);
+            this.host = (_.valids.not.contains(map,"host") ? global.location.hostname : map.host);
+            this.binary = (_.valids.not.contains(map,"binary") ? "application/octect-stream": "text/plain;charset=utf-8");
+            this.basetype = (_.valids.not.contains(map,"type") ? "x-www-form-urlencoded" : map.type);
+
+            this.$unsecure("makeURL",function(){
+                query = this.getConfigAttr("query");
+                var uri = (this.scheme + "://" + this.host +  ":" + this.port + "/" + this.map.path + "?" + query);
+                return uri;
+            });
+
+            this.headers = _.Store.make();
             this.map = map;
 
             //switches to allow connection to available upgrades
@@ -110,77 +119,124 @@ var unify = _.Mask(function(){
 
                 if(upgrades.indexOf("websocket") !== -1) this.socket.on();
                 else this.socket.off();
-
             });
+        },
+        Headers: function(map){
+          this.headers.addAll(map);
         },
         connect: function(){},
         disconnect: function(){},
         toXHR: function(map){
           if(!this.xhr.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.XHR.make(map,this);
+          return uni.XHRTransport.make(map,this);
         },
         toWebSocket: function(){
           if(!this.socket.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.WebSocket.make(map,this);
+          return uni.WebSocketTransport.make(map,this);
         },
         toJSON: function(){
           if(!this.json.isOn()) return;
           map = _.Util.extends({},this.map,map);
-          return uni.JSON.make(map,this);
+          return uni.JSONTransport.make(map,this);
         },
     });
 
-    this.JSON = this.Transport.extends({
+    this.JSONTransport = this.Transport.extends({
       init: function(map,t){
-        this.$super(map,t);
+            this.$super(map,t);
 
-        this.$secure("handleReply",function(data){
-            console.log("got reply:",data);
-            var upgrades = data.Upgrades,
-                payload = data.Payload;
+            var self = this;
+            var rn = Math.floor(1 * Math.random(10));
 
-            var fn = this.getConfigAttr("fn");
+            this.__cbName = ["__Callback",cbhash+=rn].join("");
 
-            this.__update(upgrades);
-            fn.call(null,payload);
-        });
+            this.config({
+               "prehead": ["json=true","callback="+this.__cbName]
+            });
 
-        var jsonConf = this.connector = createJSON(this.map);
-        this.config(jsonConf);
+            win[this.__cbName] = function(){
+              var args = _.enums.toArray(arguments);
+              self.handleReply.apply(self,args);
+            };
 
-        var self = this;
-        win[jsonConf.name] = function(){
-          var args = _.enums.toArray(arguments);
-          self.handleReply.apply(self,args);
-        };
-        },
-        connect: function(){
-        doc.body.appendChild(this.connector.script);
-        },
-        disconnect: function(){
-        doc.body.removeChild(this.connector.script);
-        delete win[this.getConfigAttr("name")]
-        },
-        toJSONP: function(){
-        return this;
-        },
+            this.$secure("handleReply",function(data){
+                var upgrades = data.Upgrades,
+                    payload = data.Payload;
+
+                this.__update(upgrades);
+                map.fn.call(null,payload);
+            });
+
+            this.hooks.addBefore(function(o){
+                var heads = [];
+                self.headers.each(function(e,i,o,fx){
+                    heads.push([i,e].join("="));
+                });
+
+                var prehead = this.getConfigAttr("prehead");
+                heads = heads.concat(prehead);
+
+                this.config({
+                    query: heads.join("&")
+                });
+            });
+
+
+            this.hooks.add(function(o){
+                o.src = this.makeURL();
+                doc.body.appendChild(o);
+            });
+
+      },
+      connect: function(){
+            this.hooks.distributeWith(this,[doc.createElement("script")]);
+      },
+      disconnect: function(){
+            doc.body.removeChild(this.connector.script);
+            delete win[this.__cbName];
+      },
+      toJSONP: function(){
+            return this;
+      },
     });
 
-    this.XHR = this.Transport.extends({
+    this.XHRTransport = this.Transport.extends({
         init: function(map,t){
             this.$super(map,t);
+
+            if(this.cors && this.xdr){
+              this.generator = createXDR();
+            }else{
+             this.generator = createXHR();
+            }
+
+            this.hooks.addBefore(function(o){
+                console.log("before hook:",o);
+            });
+
+            this.hooks.add(function(o){
+                console.log("in hook:",o);
+            });
+
+            this.hooks.addAfter(function(o){
+                console.log("after hook:",o);
+            });
+
+            this.connections = [];
         },
         connect: function(){
-
+            var req = this.generator();
+            this.hooks.emit(req);
+            this.connections.push(req);
         },
         disconnect: function(){
 
         },
     });
 
-    this.WebSocket = this.Transport.extends({
+    this.WebSocketTransport = this.Transport.extends({
         init: function(map,t){
         this.$super(map,t);
         },
@@ -192,6 +248,17 @@ var unify = _.Mask(function(){
         }
     });
 
+    this.unsecure("JSON",function(map){
+        return this.JSONTransport.make(map);
+    });
+
+    this.unsecure("Websocket",function(map){
+        return this.WebSocketTransport.make(map);
+    });
+
+    this.unsecure("XHR",function(map){
+        return this.XHRTransport.make(map);
+    });
 
     this.isTransport = _.Checker.Type(this.Transport.instanceBelongs);
 });

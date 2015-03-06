@@ -3,6 +3,13 @@ var _ = require("stackq");
 var domain = module.exports = {};
 
 domain.Requests = _.Checker({
-  url: _.valids.String,
   fn: _.valids.Function,
-})
+  path: _.valids.String,
+  //includes the not required but standard pieces
+  scheme: _.funcs.maybe(_.valids.String),
+  headers: _.funcs.maybe(_.valids.Object),
+  binary: _.funcs.maybe(_.valids.Boolean),
+  port: _.funcs.maybe(_.valids.String),
+  type: _.funcs.maybe(_.valids.String),
+  host: _.funcs.maybe(_.valids.String),
+});

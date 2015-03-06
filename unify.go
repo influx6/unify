@@ -17,6 +17,12 @@ var WebSocketUpgrade = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+type Unify struct {
+	Activator func(u *Unified)
+	Meta      map[string]interface{}
+	Protocols map[string]bool
+}
+
 type JSONReply struct {
 	Upgrades []string
 	Payload  interface{}
@@ -42,17 +48,20 @@ type RequestMirror struct {
 }
 
 type WebSocketMirror struct {
+	Type int
 	*RequestMirror
 	Procotol map[string]bool
 	Upgrade  interface{}
 }
 
 type XHRMirror struct {
+	Type int
 	*RequestMirror
 	Procotol map[string]bool
 }
 
 type JsonMirror struct {
+	Type int
 	*RequestMirror
 	CallbackName string
 	Procotol     map[string]bool
@@ -99,12 +108,6 @@ func (r *Unified) Write(w interface{}) {
 
 func (r *Unified) End() {
 	r.Glass.End()
-}
-
-type Unify struct {
-	Activator func(u *Unified)
-	Meta      map[string]interface{}
-	Protocols map[string]bool
 }
 
 func (r *JsonMirror) Init() {}
@@ -305,7 +308,7 @@ func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestG
 			}
 		}
 		reqmirror.Streamer = true
-		return RequestGlass(&WebSocketMirror{reqmirror, u.Protocols, nil})
+		return RequestGlass(&WebSocketMirror{3, reqmirror, u.Protocols, nil})
 	}
 
 	if _, ok := query["json"]; ok {
@@ -319,12 +322,12 @@ func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestG
 		jscall, okc := query[cbName]
 		if okc {
 			reqmirror.Streamer = false
-			return RequestGlass(&JsonMirror{reqmirror, jscall[0], u.Protocols})
+			return RequestGlass(&JsonMirror{2, reqmirror, jscall[0], u.Protocols})
 		}
 	}
 
 	reqmirror.Streamer = true
-	return RequestGlass(&XHRMirror{reqmirror, u.Protocols})
+	return RequestGlass(&XHRMirror{1, reqmirror, u.Protocols})
 }
 
 func (u *Unify) Serve(rw http.ResponseWriter, r *http.Request) {
