@@ -28,8 +28,24 @@ type JSONReply struct {
 	Payload  interface{}
 }
 
+//MessagePack are the internal construt created when messages are recieved from any transport,in a sense its a means of unifying
+//the data recieved on any transport although certain differences do occur,hence the message pack comes with a Type parameter
+//that ranges from Form,File and Socket for the respective types.
+//Form usually occurs for x-www-urlencoded-from data ,that is form data sent directly to the server
+//File for octect-stream or file or binary data
+//Socket for socket based messages,as we are using gorilla/websocket,we need to know the message type
+//The head and Body paramters can really contain any data as needed
+type MessagePack struct {
+	Type string
+	Head interface{}
+	Body interface{}
+	Bit  int
+}
+
+//RequestGlass is the general interface definition for all mirrors and defines a few functions that allow unified control
+//despite the underline transport type
 type RequestGlass interface {
-	Write(data interface{})
+	Write(data *MessagePack)
 	End()
 	GetMeta() map[string]interface{}
 	Reader() *evroll.Streams
@@ -38,6 +54,7 @@ type RequestGlass interface {
 	Init()
 }
 
+//Requestmirror handles the normal http request connections and wraps up the response and request objects for use
 type RequestMirror struct {
 	res       http.ResponseWriter
 	req       *http.Request
@@ -47,11 +64,13 @@ type RequestMirror struct {
 	Streamer  bool
 }
 
+//WebSocketMirror handles wrapping of the websocket connection into a comforming glass interface and provides
+//a basic protocol type and all input come as messagepack with socket as type
 type WebSocketMirror struct {
 	Type int
 	*RequestMirror
 	Procotol map[string]bool
-	Upgrade  interface{}
+	Socket   *websocket.Conn
 }
 
 type XHRMirror struct {
@@ -71,11 +90,6 @@ type Unified struct {
 	Protocols map[string]bool
 	Meta      map[string]interface{}
 	Glass     RequestGlass
-}
-
-type RequestData struct {
-	Form     interface{}
-	PostForm interface{}
 }
 
 func (r *RequestMirror) GetMeta() map[string]interface{} {
@@ -102,7 +116,12 @@ func (r *Unified) Init() {
 
 }
 
-func (r *Unified) Write(w interface{}) {
+func (r *Unified) WriteString(w string) {
+	m := &MessagePack{"Data", nil, w, 1}
+	r.Write(m)
+}
+
+func (r *Unified) Write(w *MessagePack) {
 	r.Glass.Write(w)
 }
 
@@ -110,9 +129,25 @@ func (r *Unified) End() {
 	r.Glass.End()
 }
 
-func (r *JsonMirror) Init() {}
+func (r *JsonMirror) Init() {
+	q := r.req.URL.RawQuery
+	fr := r.req.URL.Fragment
+	qs, err := url.ParseQuery(q)
 
-func (r *JsonMirror) Write(data interface{}) {
+	if err != nil {
+		log.Println("Raw Query Parsing Error:", err)
+		return
+	}
+
+	// delete(qs, "json")
+	// delete(qs, "callback")
+
+	pack := &MessagePack{"Param", fr, qs, 0}
+
+	r.Reader().Send(pack)
+}
+
+func (r *JsonMirror) Write(data *MessagePack) {
 	r.OutStream.Send(data)
 }
 
@@ -128,19 +163,26 @@ func (r *JsonMirror) End() {
 
 	reply.Upgrades = proc
 
-	data, ok := r.OutStream.Buffer.Obj().([]interface{})
+	brf := make([]interface{}, 0)
 
-	if !ok {
-		reply.Payload = data
-	} else {
-		if len(data) == 1 {
-			reply.Payload = data[0]
-		} else {
-			reply.Payload = data
+	r.Writer().Receive(func(d interface{}) {
+		m, ok := d.(*MessagePack)
+
+		if !ok {
+			return
 		}
-	}
 
-	r.OutStream.Buffer.Clear()
+		// bits := goutils.MorphByte.Morph(m.Body)
+		brf = append(brf, m.Body)
+	})
+
+	r.Writer().Stream()
+
+	if len(brf) == 1 {
+		reply.Payload = brf[0]
+	} else {
+		reply.Payload = brf
+	}
 
 	buff, err := json.Marshal(reply)
 
@@ -196,7 +238,7 @@ func (r *XHRMirror) Init() {
 			if err := r.req.ParseForm(); err != nil {
 				log.Println(err)
 			} else {
-				r.InStream.Send(&RequestData{r.req.Form, r.req.PostForm})
+				r.InStream.Send(&MessagePack{"Form", r.req.Form, r.req.PostForm, 1})
 			}
 		}
 
@@ -204,7 +246,7 @@ func (r *XHRMirror) Init() {
 			if err := r.req.ParseMultipartForm(32 << 20); err != nil {
 				log.Println(err)
 			} else {
-				r.InStream.Send(&RequestData{r.req.MultipartForm.Value, r.req.MultipartForm.File})
+				r.InStream.Send(&MessagePack{"File", r.req.MultipartForm.Value, r.req.MultipartForm.File, 1})
 			}
 		}
 	}
@@ -214,7 +256,7 @@ func (r *XHRMirror) End() {
 	proc := []string{}
 
 	for key, _ := range r.Procotol {
-		if key != "jsonp" {
+		if key != "xhr" {
 			proc = append(proc, key)
 		}
 	}
@@ -222,23 +264,27 @@ func (r *XHRMirror) End() {
 	buffer := []byte{}
 
 	r.Writer().Receive(func(d interface{}) {
-		bits := goutils.MorphByte.Morph(d)
+		m, ok := d.(*MessagePack)
+
+		if !ok {
+			return
+		}
+
+		bits := goutils.MorphByte.Morph(m.Body)
 		buffer = append(buffer, bits...)
 	})
+
 	r.Writer().Stream()
 
 	// r.res.Header().Set("Content-Type", "charset=utf-8")
+	r.res.Header().Set("Upgrades", strings.Join(proc, ";"))
 	r.res.Header().Set("Content-Length", fmt.Sprint(len(buffer)))
 	r.res.WriteHeader(200)
 	r.res.Write(buffer)
 }
 
-func (r *XHRMirror) Write(data interface{}) {
+func (r *XHRMirror) Write(data *MessagePack) {
 	r.OutStream.Send(data)
-}
-
-func (r *WebSocketMirror) End() {
-
 }
 
 func (r *WebSocketMirror) Init() {
@@ -270,19 +316,48 @@ func (r *WebSocketMirror) Init() {
 		return
 	}
 
-	r.Upgrade = u
+	r.Socket = u
+
+	//go routines run constantly to get messages sent into the read streams
+	go func() {
+		for {
+
+			mtype, mesg, err := u.ReadMessage()
+
+			if err != nil {
+				log.Println("Socket Read Error", err)
+				r.Socket.Close()
+				break
+			}
+
+			packet := &MessagePack{"Socket", nil, mesg, mtype}
+			r.Reader().Send(packet)
+		}
+	}()
 }
 
-func (r *WebSocketMirror) Write(data interface{}) {
-	//convert to byte[] array
-	buffer, ok := data.([]byte)
+func (r *WebSocketMirror) Write(data *MessagePack) {
+	r.OutStream.Send(data)
+}
 
-	if !ok {
-		return
-	}
+func (r *WebSocketMirror) End() {
+	writer := r.Writer()
+	writer.Receive(func(data interface{}) {
+		m, ok := data.(*MessagePack)
 
-	var _ interface{}
-	_ = buffer
+		if !ok {
+			return
+		}
+
+		str := goutils.MorphByte.Morph(m.Body)
+		err := r.Socket.WriteMessage(m.Bit, str)
+
+		if err != nil {
+			log.Println("Socket Write Error", err)
+		}
+
+	})
+	writer.Stream()
 }
 
 func IsWebSocketRequest(r *http.Request) bool {

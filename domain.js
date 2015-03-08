@@ -12,4 +12,7 @@ domain.Requests = _.Checker({
   port: _.funcs.maybe(_.valids.String),
   type: _.funcs.maybe(_.valids.String),
   host: _.funcs.maybe(_.valids.String),
+  method: _.funcs.maybe(_.valids.String),
+  async: _.funcs.maybe(_.valids.Boolean),
+  socket: _.funcs.maybe(_.valids.Boolean),
 });

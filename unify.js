@@ -14,7 +14,8 @@ var unify = _.Mask(function(){
         cors: false,
         xdr: false,
         ssl: false,
-        credentails: true,
+        socket: false,
+        credentials: true,
     };
 
     var createXDR = function(){
@@ -22,8 +23,23 @@ var unify = _.Mask(function(){
             return createXHR();
         }
         return function(){
-            return new XDomainRequest();
+            var xdr = new XDomainRequest();
+            return xdr;
         };
+    };
+
+    var isXDR = function(o){
+        if(typeof global.XDomainRequest === "undefined" && typeof XDomainRequest === "undefined"){
+            return false;
+        }
+        return o instanceof XDomainRequest;
+    };
+
+    var isIOS = function(){
+        if("undefined" != typeof global.navigator && /iPad|iPhone|iPod/i.test(global.navigator.userAgent)){
+            return true;
+        }
+        return false;
     };
 
     var createXHR = function(){
@@ -78,19 +94,40 @@ var unify = _.Mask(function(){
             var self = this;
             this.$super();
 
+            this.pub("error");
+            this.pub("request");
+            this.pub("done");
+
+            this.connection = null;
+            this.buffer = [];
             this.heartBeat = 1000;
             this.upgraded = upgradable;
 
-            this.hooks = _.Hooks.make("transport-hooks");
-            this.scheme = map.ssl ? "https" : "http";
-            this.port = (_.valids.not.contains(map,"port") ? (map.ssl ? 443 : (global.location.port ? global.location.port : 80)) : map.port);
+            this.hooks = _.MiddlewareHooks.make("transport-hooks");
+
+            if(map.socket){
+                this.scheme = map.ssl ? "wss" : "ws";
+            }else{
+                this.scheme = map.ssl ? "https" : "http";
+            }
+
+            this.port = (_.valids.not.contains(map,"port") ? (map.ssl ? 443 : (global.location.port ? global.location.port : 80)) : (new String(map.port).replace(/^:/,"").toString()));
             this.host = (_.valids.not.contains(map,"host") ? global.location.hostname : map.host);
-            this.binary = (_.valids.not.contains(map,"binary") ? "application/octect-stream": "text/plain;charset=utf-8");
+            this.binary = (_.valids.not.contains(map,"binary") ? false : true);
+            this.binaryType = (_.valids.not.contains(map,"binary") ? "application/octect-stream": "text/plain;charset=utf-8");
             this.basetype = (_.valids.not.contains(map,"type") ? "x-www-form-urlencoded" : map.type);
+            this.async = (_.valids.not.contains(map,"async") ? true : map.async);
+            this.active = false;
+
+            this.method = this.$bind(function(){
+                hasbuff = this.buffer.length > 0;
+                return _.valids.not.contains(this.map,"method") ? (hasbuff ? "POST" : "GET") : this.map.method;
+            });
 
             this.$unsecure("makeURL",function(){
-                query = this.getConfigAttr("query");
-                var uri = (this.scheme + "://" + this.host +  ":" + this.port + "/" + this.map.path + "?" + query);
+                var q = this.getConfigAttr("query");
+                var qs = _.valids.exists(q) ? ( "?" + q) : "";
+                var uri = (this.scheme + "://" + this.host +  ":" + this.port + "/" + this.map.path.replace(/^\//,"") + qs);
                 return uri;
             });
 
@@ -106,6 +143,18 @@ var unify = _.Mask(function(){
             this.xhr.on();
             this.socket.on();
 
+            this.after("done",function(o){
+                self.connection = null;
+                self.active = false;
+            });
+
+            this.hooks.addBefore(function(d,next,end){
+                self.connection = d;
+                self.active = true;
+                self.emit("request",d);
+                next();
+            });
+
             this.$secure("__update",function(upgrades){
                 upgrades = _.enums.map(upgrades,function(e){ return e.toLowerCase(); });
 
@@ -120,10 +169,19 @@ var unify = _.Mask(function(){
                 if(upgrades.indexOf("websocket") !== -1) this.socket.on();
                 else this.socket.off();
             });
+
+            //ensure to deal with memory leaks
+            if(global.attachEvent){
+                global.attachEvent("onunload",self.$bind(self.disconnect));
+            }else if(global.addEventListener){
+                global.addEventListener("beforeunload",self.$bind(self.disconnect));
+            }
+
         },
         Headers: function(map){
           this.headers.addAll(map);
         },
+        write: function(){},
         connect: function(){},
         disconnect: function(){},
         toXHR: function(map){
@@ -167,11 +225,24 @@ var unify = _.Mask(function(){
 
                 this.__update(upgrades);
                 map.fn.call(null,payload);
+                this.emit("done",this.connection);
             });
 
-            this.hooks.addBefore(function(o){
+            this.$secure("handleError",function(script,err){
+                this.emit("error",script,err);
+                script.onload = script.onerror = null;
+            });
+
+            this.hooks.addBefore(function(o,next,end){
+                o.onerror = function(e){
+                    self.handleError(o,e);
+                };
+                next();
+            });
+
+            this.hooks.addBefore(function(o,next,end){
                 var heads = [];
-                self.headers.each(function(e,i,o,fx){
+                this.headers.each(function(e,i,o,fx){
                     heads.push([i,e].join("="));
                 });
 
@@ -181,30 +252,39 @@ var unify = _.Mask(function(){
                 this.config({
                     query: heads.join("&")
                 });
+
+                next();
             });
 
-
-            this.hooks.add(function(o){
+            this.hooks.add(function(o,next,end){
                 o.src = this.makeURL();
                 doc.body.appendChild(o);
+                next();
             });
-
       },
       connect: function(){
-            this.hooks.distributeWith(this,[doc.createElement("script")]);
+        if(this.active) return;
+        if(_.valids.not.Function(win[this.__cbName])){
+         win[this.__cbName] = function(){
+          var args = _.enums.toArray(arguments);
+          self.handleReply.apply(self,args);
+         };
+        }
+        this.hooks.emitWith(this,doc.createElement("script"));
       },
       disconnect: function(){
-            doc.body.removeChild(this.connector.script);
-            delete win[this.__cbName];
+         doc.body.removeChild(this.connection);
+         delete win[this.__cbName];
       },
       toJSONP: function(){
-            return this;
+         return this;
       },
     });
 
     this.XHRTransport = this.Transport.extends({
         init: function(map,t){
             this.$super(map,t);
+            var self = this;
 
             if(this.cors && this.xdr){
               this.generator = createXDR();
@@ -212,39 +292,197 @@ var unify = _.Mask(function(){
              this.generator = createXHR();
             }
 
-            this.hooks.addBefore(function(o){
-                console.log("before hook:",o);
+            this.$secure("handleReply",function(o){
+                var data,ctype,upgrades;
+                try{
+                    try{
+                        ctype = o.getResponseHeader("Content-Type").split(/;/)[0];
+                        upgrades = o.getResponseHeader("Upgrades").split(/;/);
+                    }catch(e){}
+
+                    if(ctype === "application/octect-stream"){
+                        data  = o.response;
+                    }else{
+                        if(!this.binary){
+                          data = o.responseText;
+                        }else{
+                          data = o.response;
+                        }
+                    }
+                }catch(e){
+                    this.emit("error",o,e);
+                }
+
+                this.__update(upgrades);
+                map.fn.call(null,data);
+                this.emit("done",data);
             });
 
-            this.hooks.add(function(o){
-                console.log("in hook:",o);
+            this.$secure("handleError",function(o,err){
+                this.emit("error",script,err);
+                o.onreadystatechange = o.onload = o.onerror = null;
             });
 
-            this.hooks.addAfter(function(o){
-                console.log("after hook:",o);
+            this.hooks.add(function(o,next,end){
+                o.onerror = function(e){
+                    self.handleError(o,e);
+                };
+                next();
             });
 
-            this.connections = [];
+            this.hooks.add(function(o,next,end){
+                if (this.map.credentials){
+                    o.withCredentials = true;
+                }
+
+                if (isXDR(o)){
+                    o.onError = function(e){
+                        self.handleError(o,e);
+                    };
+
+                    o.onLoad = function(){
+                        self.handleReply(o);
+                    };
+                }else{
+                    o.onreadystatechange = function(){
+                        if(4 != o.readyState) return;
+                        if(200 == o.status || 1223 == o.status){
+                            self.handleReply(o);
+                        }else{
+                            setTimeout(function(){
+                                self.handleError(o,self.status);
+                            },0);
+                        }
+                    };
+                }
+
+                next();
+            });
+
+            this.hooks.addBefore(function(o,next,end){
+                var url = this.makeURL();
+                o.open(this.method(),url,this.async);
+                if(this.binary){
+                    o.responseType = "arraybuffer";
+                }
+                next();
+            });
+
+            this.hooks.addBefore(function(o,next,end){
+                this.headers.each(function(e,i,o,fx){
+                    o.setRequestHeader(i,e);
+                });
+                next();
+            });
+
+            this.hooks.addAfter(function(o,next,end){
+                var data = this.buffer.length == 0 ? this.buffer[0] : this.buffer;
+                this.buffer = [];
+                o.send(data);
+                next();
+            });
+
         },
         connect: function(){
+            if(this.active) return;
             var req = this.generator();
-            this.hooks.emit(req);
-            this.connections.push(req);
+            this.connection = req;
+            this.hooks.emitWith(this,req);
         },
         disconnect: function(){
-
+          if(this.active){
+              this.connection.abort();
+          }
         },
     });
 
     this.WebSocketTransport = this.Transport.extends({
         init: function(map,t){
-        this.$super(map,t);
+            map.socket = true;
+            this.$super(map,t);
+            var self = this;
+
+            this.pub("flush");
+            this.pub("drain");
+
+            this.pub("open");
+            this.pub("close");
+            this.pub("reply");
+
+            this.$secure("flushBuffer",function(){
+                if(this.buffer.length <= 0){
+                  this.emit("drain",this.connection);
+                }else{
+
+                  this.emit("flush",this.connection);
+                }
+            });
+
+            this.$secure("handleReply",function(ev){
+                if(isIOS()){
+                  _.Util.nextTick(function(){
+                     map.fn.call(null,ev.data,ev);
+                  });
+                }else{
+                 map.fn.call(null,ev.data,ev);
+                }
+                this.emit("reply",ev);
+            });
+
+            this.$secure("handleOpen",function(e){
+                this.emit("open",e);
+            });
+
+            this.$secure("handleError",function(e){
+                this.emit("error",e);
+            });
+
+            this.$secure("handleClose",function(e){
+                this.emit("close",e);
+            });
+
+            this.hooks.add(function(d,next,end){
+                console.log("in:",d);
+                next();
+            });
+
+            this.hooks.addBefore(function(d,next,end){
+                console.log("before:",d);
+                d.binaryType = "arraybuffer";
+                d.onmessage = function(ev){
+                  self.handleReply(ev);
+                };
+                d.onerror = function(e){
+                  self.handleError(e);
+                };
+                d.onopen = function(){
+                  self.handleOpen(d);
+                };
+                d.onclose = function(){
+                  self.handleClose(d);
+                };
+                next();
+            });
+
+            this.hooks.addAfter(function(d,next,end){
+                console.log("after:",d);
+                next();
+            });
+
         },
         connect: function(){
-
+         if(this.active){
+            return this.flush();
+         }
+          var url = this.makeURL();
+          var ws = new WebSocket(url);
+          this.connection = ws;
+          this.hooks.emitWith(this,ws);
         },
         disconnect: function(){
-
+          if(this.active){
+              this.connection.close();
+          }
         }
     });
 
