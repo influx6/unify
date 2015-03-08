@@ -9428,6 +9428,7 @@ var unify = _.Mask(function(){
             this.socket.on();
 
             this.after("done",function(o){
+                console.log("done-nulli");
                 self.connection = null;
                 self.active = false;
             });
@@ -9465,7 +9466,9 @@ var unify = _.Mask(function(){
         Headers: function(map){
           this.headers.addAll(map);
         },
-        write: function(){},
+        write: function(data){
+            this.buffer.push(data);
+        },
         connect: function(){},
         disconnect: function(){},
         toXHR: function(map){
@@ -9660,8 +9663,9 @@ var unify = _.Mask(function(){
             });
 
             this.hooks.addAfter(function(o,next,end){
-                var data = this.buffer.length == 0 ? this.buffer[0] : this.buffer;
+                var data = this.buffer.length == 1 ? this.buffer[0] : this.buffer;
                 this.buffer = [];
+                console.log("sending:",data)
                 o.send(data);
                 next();
             });

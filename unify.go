@@ -116,6 +116,14 @@ func (r *Unified) Init() {
 
 }
 
+func (r *Unified) Reader() *evroll.Streams {
+	return r.Glass.Reader()
+}
+
+func (r *Unified) Writer() *evroll.Streams {
+	return r.Glass.Writer()
+}
+
 func (r *Unified) WriteString(w string) {
 	m := &MessagePack{"Data", nil, w, 1}
 	r.Write(m)
@@ -236,7 +244,7 @@ func (r *XHRMirror) Init() {
 
 		if wind != -1 {
 			if err := r.req.ParseForm(); err != nil {
-				log.Println(err)
+				log.Println("Request Read Form Error", err)
 			} else {
 				r.InStream.Send(&MessagePack{"Form", r.req.Form, r.req.PostForm, 1})
 			}
@@ -244,10 +252,22 @@ func (r *XHRMirror) Init() {
 
 		if mind != -1 {
 			if err := r.req.ParseMultipartForm(32 << 20); err != nil {
-				log.Println(err)
+				log.Println("Request Read MultipartForm Error", err)
 			} else {
 				r.InStream.Send(&MessagePack{"File", r.req.MultipartForm.Value, r.req.MultipartForm.File, 1})
 			}
+		}
+
+		if mind == -1 && wind == -1 && r.req.Body != nil {
+
+			data := make([]byte, r.req.ContentLength)
+			total, err := r.req.Body.Read(data)
+
+			if err != nil {
+				log.Println("Request Read Body Error", err)
+			}
+
+			r.InStream.Send(&MessagePack{"body", total, data, 2})
 		}
 	}
 }

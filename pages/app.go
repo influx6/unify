@@ -13,7 +13,10 @@ func main() {
 	var _ interface{}
 
 	unit := unify.CreateUnify(func(conn *unify.Unified) {
-		fmt.Println("new connection:", conn, conn.Glass, conn.Glass.GetMeta())
+		conn.Reader().Receive(func(i interface{}) {
+			fmt.Println("receving :", i)
+		})
+		conn.Reader().Stream()
 		conn.WriteString("welcome!")
 		conn.WriteString("Alex!")
 		conn.End()
