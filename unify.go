@@ -6,6 +6,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/influx6/evroll"
 	"github.com/influx6/goutils"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -129,6 +130,11 @@ func (r *Unified) WriteString(w string) {
 	r.Write(m)
 }
 
+func (r *Unified) WriteMessage(w interface{}, bit int) {
+	m := &MessagePack{"Data", nil, w, bit}
+	r.Write(m)
+}
+
 func (r *Unified) Write(w *MessagePack) {
 	r.Glass.Write(w)
 }
@@ -214,6 +220,16 @@ func (r *JsonMirror) End() {
 }
 
 func (r *XHRMirror) Init() {
+	proc := []string{}
+
+	for key, _ := range r.Procotol {
+		if key != "xhr" {
+			proc = append(proc, key)
+		}
+	}
+
+	r.res.Header().Set("Upgrades", strings.Join(proc, ";"))
+
 	agent, ok := r.req.Header["User-Agent"]
 
 	if ok {
@@ -264,7 +280,10 @@ func (r *XHRMirror) Init() {
 			total, err := r.req.Body.Read(data)
 
 			if err != nil {
-				log.Println("Request Read Body Error", err)
+				if err != io.EOF {
+					log.Println("Request Read Body Error", err)
+					return
+				}
 			}
 
 			r.InStream.Send(&MessagePack{"body", total, data, 2})
@@ -273,14 +292,6 @@ func (r *XHRMirror) Init() {
 }
 
 func (r *XHRMirror) End() {
-	proc := []string{}
-
-	for key, _ := range r.Procotol {
-		if key != "xhr" {
-			proc = append(proc, key)
-		}
-	}
-
 	buffer := []byte{}
 
 	r.Writer().Receive(func(d interface{}) {
@@ -296,9 +307,8 @@ func (r *XHRMirror) End() {
 
 	r.Writer().Stream()
 
-	// r.res.Header().Set("Content-Type", "charset=utf-8")
-	r.res.Header().Set("Upgrades", strings.Join(proc, ";"))
 	r.res.Header().Set("Content-Length", fmt.Sprint(len(buffer)))
+
 	r.res.WriteHeader(200)
 	r.res.Write(buffer)
 }
@@ -308,6 +318,16 @@ func (r *XHRMirror) Write(data *MessagePack) {
 }
 
 func (r *WebSocketMirror) Init() {
+	proc := []string{}
+
+	for key, _ := range r.Procotol {
+		if key != "xhr" {
+			proc = append(proc, key)
+		}
+	}
+
+	r.res.Header().Set("Upgrades", strings.Join(proc, ";"))
+
 	agent, ok := r.req.Header["User-Agent"]
 
 	if ok {
@@ -346,12 +366,14 @@ func (r *WebSocketMirror) Init() {
 
 			if err != nil {
 				log.Println("Socket Read Error", err)
-				r.Socket.Close()
-				break
+				// r.Socket.Close()
+				// break
+				return
 			}
 
 			packet := &MessagePack{"Socket", nil, mesg, mtype}
 			r.Reader().Send(packet)
+			r.Reader().Stream()
 		}
 	}()
 }
@@ -375,7 +397,6 @@ func (r *WebSocketMirror) End() {
 		if err != nil {
 			log.Println("Socket Write Error", err)
 		}
-
 	})
 	writer.Stream()
 }
@@ -451,4 +472,16 @@ func CreateUnify(f func(con *Unified), protocols []string) *Unify {
 	}
 
 	return u
+}
+
+func HandleMessagePack(fx func(m *MessagePack)) func(interface{}) {
+	return func(data interface{}) {
+		msg, ok := data.(*MessagePack)
+
+		if !ok {
+			return
+		}
+
+		fx(msg)
+	}
 }

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"github.com/influx6/goutils"
 	"github.com/influx6/grids"
 	"github.com/influx6/unify"
 	"github.com/influx6/webgrid"
@@ -13,13 +13,12 @@ func main() {
 	var _ interface{}
 
 	unit := unify.CreateUnify(func(conn *unify.Unified) {
-		conn.Reader().Receive(func(i interface{}) {
-			fmt.Println("receving :", i)
-		})
+		conn.Reader().Receive(unify.HandleMessagePack(func(msg *unify.MessagePack) {
+			var data = goutils.MorphString.Morph(msg.Body)
+			conn.WriteMessage("got your message: "+data, msg.Bit)
+			conn.End()
+		}))
 		conn.Reader().Stream()
-		conn.WriteString("welcome!")
-		conn.WriteString("Alex!")
-		conn.End()
 	}, []string{"xhr", "jsonp", "websocket"})
 
 	app := webgrid.NewHttp()

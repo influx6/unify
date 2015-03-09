@@ -6123,9 +6123,8 @@ module.exports = (function(core){
         if(this.fired.indexOf('*') === -1) this.fired.push('*')
       }
       var ev = this.events(name);
-      if(ev.totalSize() > 0){
-          ev.distributeWith(ev,rest);
-      }
+      if(ev.totalSize() <= 0) return;
+      ev.distributeWith(ev,rest);
       if(this.fired.indexOf(name) === -1){ this.fired.push(name);}
     },
     hook: function(es){
@@ -9316,7 +9315,7 @@ global.Stackq = as;
         this.unsecure("encode64",function(data,callback){
             if(_.valids.not.Function(callback)) return;
 
-            return callback(utf8.encode(data));
+
         });
 
         this.unsecure("encodeBlob",function(data,callback){
@@ -9455,7 +9454,6 @@ global.Stackq = as;
                 this.pub("error");
                 this.pub("request");
                 this.pub("done");
-                this.pub("drain");
 
                 this.connection = null;
                 this.buffer = [];
@@ -9514,10 +9512,8 @@ global.Stackq = as;
                     next();
                 });
 
-                this.$secure("__update",function(upg){
-                    if(_.valids.not.exists(upg)) return;
-
-                    upgrades = _.enums.map(upg,function(e){ return e.toLowerCase(); });
+                this.$secure("__update",function(upgrades){
+                    upgrades = _.enums.map(upgrades,function(e){ return e.toLowerCase(); });
 
                     this.upgrades = upgrades;
 
@@ -9537,13 +9533,13 @@ global.Stackq = as;
                 }else if(global.addEventListener){
                     global.addEventListener("beforeunload",self.$bind(self.disconnect));
                 }
+
             },
             Headers: function(map){
               this.headers.addAll(map);
             },
             write: function(data){
                 this.buffer.push(data);
-                return this;
             },
             connect: function(){},
             disconnect: function(){},
@@ -9565,7 +9561,7 @@ global.Stackq = as;
         });
 
         this.JSONTransport = this.Transport.extends({
-            init: function(map,t){
+          init: function(map,t){
                 this.$super(map,t);
 
                 var self = this;
@@ -9581,16 +9577,6 @@ global.Stackq = as;
                   var args = _.enums.toArray(arguments);
                   self.handleReply.apply(self,args);
                 };
-
-                this.$secure("flush",function(){
-                    if(_.valids.not.Function(win[this.__cbName])){
-                     win[this.__cbName] = function(){
-                      var args = _.enums.toArray(arguments);
-                      self.handleReply.apply(self,args);
-                     };
-                    }
-                    this.hooks.emitWith(this,doc.createElement("script"));
-                });
 
                 this.$secure("handleReply",function(data){
                     var upgrades = data.Upgrades,
@@ -9634,20 +9620,24 @@ global.Stackq = as;
                     doc.body.appendChild(o);
                     next();
                 });
-            },
-            connect: function(){
-            if(this.active) return this;
-            this.flush();
-            return this;
-            },
-            disconnect: function(){
+          },
+          connect: function(){
+            if(this.active) return;
+            if(_.valids.not.Function(win[this.__cbName])){
+             win[this.__cbName] = function(){
+              var args = _.enums.toArray(arguments);
+              self.handleReply.apply(self,args);
+             };
+            }
+            this.hooks.emitWith(this,doc.createElement("script"));
+          },
+          disconnect: function(){
              doc.body.removeChild(this.connection);
              delete win[this.__cbName];
+          },
+          toJSONP: function(){
              return this;
-            },
-            toJSONP: function(){
-             return this;
-            },
+          },
         });
 
         this.XHRTransport = this.Transport.extends({
@@ -9660,12 +9650,6 @@ global.Stackq = as;
                 }else{
                  this.generator = createXHR();
                 }
-
-                this.$secure("flush",function(){
-                    var req = this.generator();
-                    this.connection = req;
-                    this.hooks.emitWith(this,req);
-                });
 
                 this.$secure("handleReply",function(o){
                     var data,ctype,upgrades;
@@ -9752,22 +9736,22 @@ global.Stackq = as;
 
                 this.hooks.addAfter(function(o,next,end){
                     var data = this.buffer.length == 1 ? this.buffer[0] : this.buffer;
-                    this.buffer.length = 0;
+                    this.buffer = [];
                     o.send(data);
-                    this.emit("drain",o);
                     next();
                 });
+
             },
             connect: function(){
-                if(this.active) return this;
-                this.flush();
-                return this;
+                if(this.active) return;
+                var req = this.generator();
+                this.connection = req;
+                this.hooks.emitWith(this,req);
             },
             disconnect: function(){
               if(this.active){
                   this.connection.abort();
               }
-              return this;
             },
         });
 
@@ -9777,24 +9761,30 @@ global.Stackq = as;
                 this.$super(map,t);
                 var self = this;
 
+                this.pub("flush");
                 this.pub("drain");
+
                 this.pub("open");
                 this.pub("close");
                 this.pub("reply");
 
                 this.$secure("flushBuffer",function(){
+                    var self = this;
+                    console.log("flushing....",this.buffer);
                     if(this.buffer.length <= 0){
                       this.emit("drain",this.connection);
                     }else{
-                       _.enums.each(this.buffer,this.$bind(function(data,i,o,fx){
-                          Parser.encode64(data,this.writeNow);
-                          return fx(null);
-                       }),this.$bind(function(){
-                           this.buffer.length = 0;
-                          _.Util.nextTick(this.$bind(function(){
-                              this.emit("drain",this.connection);
-                          }));
-                       }));
+                    console.log("will flushing....",this.buffer);
+                     this.afterOnce("open",function(){
+                         console.log("runnng flush");
+                        var nx = _.enums.nextIterator(self.buffer,function(data,index,obj){
+                           d.send(data);
+                           console.log("sending data:",data);
+                           nx.next();
+                        });
+                        if(nx) nx.next();
+                      });
+                      this.emit("flush",this.connection);
                     }
                 });
 
@@ -9810,26 +9800,24 @@ global.Stackq = as;
                 });
 
                 this.$secure("handleOpen",function(e){
+                    console.log("opening:",e);
                     this.emit("open",e);
                 });
 
                 this.$secure("handleError",function(e){
+                    console.log("error:",e);
                     this.emit("error",e);
                 });
 
                 this.$secure("handleClose",function(e){
+                    console.log("closing:",e);
                     this.emit("close",e);
                 });
 
-                this.$secure("flush",function(e){
-                    this.flushBuffer();
+                this.hooks.add(function(d,next,end){
+                    console.log("in:",d);
+                    next();
                 });
-
-                this.$secure("writeNow",function(data){
-                    this.afterOnce("open",this.$bind(function(){
-                       this.connection.send(data);
-                    }));
-                })
 
                 this.hooks.addBefore(function(d,next,end){
                     d.binaryType = "arraybuffer";
@@ -9856,20 +9844,20 @@ global.Stackq = as;
                this.buffer.push(data);
             },
             connect: function(){
-                if(this.active){
-                    return this;
-                }
-                var ws = new WebSocket(this.makeURL());
-                this.connection = ws;
-                this.hooks.emitWith(this,ws);
-                return this;
+             if(this.active){
+                 console.log('flushing');
+                return this.flush();
+             }
+              var url = this.makeURL();
+              var ws = new WebSocket(url);
+              this.connection = ws;
+              this.hooks.emitWith(this,ws);
             },
             disconnect: function(){
               if(this.active){
-                this.connection.close();
+                  this.connection.close();
               }
-              return this;
-            },
+            }
         });
 
         this.unsecure("JSON",function(map){
