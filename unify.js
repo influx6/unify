@@ -10,6 +10,10 @@
 
     var Parser =  _.Mask(function(){
 
+        var isUint8 = function(data){
+            if(_.valids.not.isInstanceOf(data,global.Uint8Array)) return false;
+            return true;
+        };
 
         var isBuffer = function(data){
             if(_.valids.not.isInstanceOf(data,global.ArrayBuffer)) return false;
@@ -23,15 +27,29 @@
 
         this.unsecure("encode",function(data,callback){
             if(_.valids.not.Function(callback)) return;
+            if(isUint8(data)) return this.encodeBuffer(data,callback);
             if(isBuffer(data)) return this.encodeBuffer(data,callback);
             if(isBlob(data)) return this.encodeBlob(data,callback);
-            return callback(this.encode64(data));
+            return this.encode64(data,callback);
         });
 
         this.unsecure("encode64",function(data,callback){
             if(_.valids.not.Function(callback)) return;
 
-            return callback(utf8.encode(data));
+            var ind = 0,src = data,dest,mesg = "";
+
+            try{
+                dest = String.fromCharCode.apply(null,new Uint8Array(data))
+            }catch(e){
+                src = new Array(src.length);
+                for(ind; ind < src.length; ind++){
+                    src[ind] = data[ind];
+                }
+                dest = String.fromCharCode.apply(null,src);
+            };
+
+            mesg += b64.btoa(dest);
+            return callback(mesg,dest);
         });
 
         this.unsecure("encodeBlob",function(data,callback){
@@ -41,16 +59,17 @@
             var file = new global.FileReader();
             file.onloaded = function(){
                 var res = file.result;
-                callback(Parser.encode64(res));
+                Parser.encode64(res,callback);
             };
 
-            file.readAsDataURL(data);
+            file.readAsArrayBuffer(data);
         });
 
         this.unsecure("encodeArrayBuffer",function(data,callback){
             if(_.valids.not.isInstanceOf(data,global.ArrayBuffer)) return;
             if(_.valids.not.Function(callback)) return;
-
+            var buffer = new Uint8Array(data);
+            Parser.encode64(buffer,callback);
         });
 
         this.unsecure("decode",function(data,callback){
@@ -297,14 +316,61 @@
                   self.handleReply.apply(self,args);
                 };
 
+                this.$secure("createWriter",function(){
+                    if(_.valids.not.exists(this.submitDoc)){
+                        var form = doc.createElement("form");
+                        var area = doc.createElement("textarea");
+                        var id = "unify_writer";
+                        var ftag = '<iframe src="javascript:0" name="'+ id + '" >';
+                        var iframe = doc.createElement(ftag);
+
+                        form.className="json_writer";
+                        form.target=id;
+                        form.style.position = "absolute";
+                        form.style.top='-1000px';
+                        form.style.left='-1000px';
+                        form.style.width = form.style.height = "0px";
+                        form.method="POST";
+                        form.setAttribute("accept-charset","utf-8");
+                        area.name = 'd';
+                        form.appendChild(area);
+
+                        this.submitDoc = { form: form, area: area };
+                        doc.body.appendChild(form);
+                    }
+
+
+                    this.submitDoc.form.action = this.makeURL();
+                });
+
                 this.$secure("flush",function(){
                     if(_.valids.not.Function(win[this.__cbName])){
-                     win[this.__cbName] = function(){
-                      var args = _.enums.toArray(arguments);
-                      self.handleReply.apply(self,args);
-                     };
+                         win[this.__cbName] = this.$bind(function(){
+                              var args = _.enums.toArray(arguments);
+                              this.handleReply.apply(self,args);
+                         });
                     }
-                    this.hooks.emitWith(this,doc.createElement("script"));
+
+                    if(this.buffer.length <= 0){
+                        this.hooks.emitWith(this,doc.createElement("script"));
+                    }else{
+                        var data = "";
+                        this.createWriter();
+                        this.submitDoc.area.value = "";
+
+                        _.enums.each(this.buffer,this.$bind(function(e,i,o,fx){
+                            data += String(e).replace(/\\n/g,"\\\n").replace(/\n/g,"\\n");
+                            return fx(null);
+                        }),this.$bind(function(){
+                            try{
+                              this.submitDoc.area.value = data;
+                              this.submitDoc.form.submit();
+                            }catch(e){
+                                self.emit("error",e);
+                            }
+                            this.buffer = [];
+                        }));
+                    }
                 });
 
                 this.$secure("handleReply",function(data){
@@ -338,30 +404,31 @@
                     heads = heads.concat(prehead);
 
                     this.config({
-                        query: heads.join("&")
+                        hquery: heads.join("&")
                     });
 
                     next();
                 });
 
                 this.hooks.add(function(o,next,end){
-                    o.src = this.makeURL();
+                    var qs = !this.hasConfigAttr("hquery") ? "" : ("?" + this.getConfigAttr("hquery"))
+                    o.src = this.makeURL() + qs;
                     doc.body.appendChild(o);
                     next();
                 });
             },
             connect: function(){
-            if(this.active) return this;
-            this.flush();
-            return this;
+                if(this.active) return this;
+                this.flush();
+                return this;
             },
             disconnect: function(){
-             doc.body.removeChild(this.connection);
-             delete win[this.__cbName];
-             return this;
+                 doc.body.removeChild(this.connection);
+                 delete win[this.__cbName];
+                 return this;
             },
             toJSONP: function(){
-             return this;
+                 return this;
             },
         });
 
@@ -467,7 +534,7 @@
 
                 this.hooks.addAfter(function(o,next,end){
                     var data = this.buffer.length == 1 ? this.buffer[0] : this.buffer;
-                    this.buffer.length = 0;
+                    this.buffer = [];
                     o.send(data);
                     this.emit("drain",o);
                     next();

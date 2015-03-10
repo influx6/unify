@@ -154,7 +154,7 @@ func (r *JsonMirror) Init() {
 	}
 
 	// delete(qs, "json")
-	// delete(qs, "callback")
+	delete(qs, "callback")
 
 	pack := &MessagePack{"Param", fr, qs, 0}
 
