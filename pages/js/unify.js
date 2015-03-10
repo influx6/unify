@@ -9323,17 +9323,26 @@ global.Stackq = as;
 
             var ind = 0,src = data,dest,mesg = "";
 
-            try{
-                dest = String.fromCharCode.apply(null,new Uint8Array(data))
-            }catch(e){
-                src = new Array(src.length);
-                for(ind; ind < src.length; ind++){
-                    src[ind] = data[ind];
-                }
-                dest = String.fromCharCode.apply(null,src);
-            };
+            if(!isUint8(data) && !isBuffer(data) && !isBlob(data)){
+                mesg += utf8.encode(data);
+            }else{
+                try{
+                    dest = String.fromCharCode.apply(null,new Uint8Array(data))
+                }catch(e){
+                    src = new Array(src.length);
+                    for(ind; ind < src.length; ind++){
+                        src[ind] = data[ind];
+                    }
+                    dest = String.fromCharCode.apply(null,src);
+                };
 
-            mesg += b64.btoa(dest);
+                var br = b64.btoa(dest);
+                console.log("dest",dest,src,br);
+
+                mesg += br;
+            }
+
+
             return callback(mesg,dest);
         });
 
