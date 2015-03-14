@@ -26,6 +26,7 @@ type Unify struct {
 
 type JSONReply struct {
 	Upgrades []string
+	Headers  map[string]interface{}
 	Payload  interface{}
 }
 
@@ -48,9 +49,10 @@ type MessagePack struct {
 type RequestGlass interface {
 	Write(data *MessagePack)
 	End()
-	GetMeta() map[string]interface{}
+	// GetMeta() map[string]interface{}
 	Reader() *evroll.Streams
 	Writer() *evroll.Streams
+	Headers() *goutils.Map
 	IsStream() bool
 	Init()
 }
@@ -59,9 +61,9 @@ type RequestGlass interface {
 type RequestMirror struct {
 	res       http.ResponseWriter
 	req       *http.Request
-	Meta      map[string]interface{}
 	InStream  *evroll.Streams
 	OutStream *evroll.Streams
+	Heads     *goutils.Map
 	Streamer  bool
 }
 
@@ -93,9 +95,13 @@ type Unified struct {
 	Glass     RequestGlass
 }
 
-func (r *RequestMirror) GetMeta() map[string]interface{} {
-	return r.Meta
+func (r *RequestMirror) Headers() *goutils.Map {
+	return r.Heads
 }
+
+// func (r *RequestMirror) GetMeta() map[string]interface{} {
+// 	return r.Meta
+// }
 
 func (r *RequestMirror) IsStream() bool {
 	return r.Streamer
@@ -114,7 +120,7 @@ func (r *Unified) IsStream() bool {
 }
 
 func (r *Unified) Init() {
-
+	r.Glass.Init()
 }
 
 func (r *Unified) Reader() *evroll.Streams {
@@ -123,6 +129,10 @@ func (r *Unified) Reader() *evroll.Streams {
 
 func (r *Unified) Writer() *evroll.Streams {
 	return r.Glass.Writer()
+}
+
+func (r *Unified) Headers() *goutils.Map {
+	return r.Glass.Headers()
 }
 
 func (r *Unified) WriteString(w string) {
@@ -156,9 +166,9 @@ func (r *JsonMirror) Init() {
 	// delete(qs, "json")
 	delete(qs, "callback")
 
-	pack := &MessagePack{"Param", fr, qs, 0}
-
+	pack := &MessagePack{"Param", fr, qs, 1}
 	r.Reader().Send(pack)
+	fmt.Println("json-instream-size:", r.Reader().Size(), r.Reader(), r.Reader().Buffer)
 }
 
 func (r *JsonMirror) Write(data *MessagePack) {
@@ -168,6 +178,29 @@ func (r *JsonMirror) Write(data *MessagePack) {
 func (r *JsonMirror) End() {
 	reply := new(JSONReply)
 	proc := []string{}
+	heads := r.Headers()
+
+	// reply.Headers = r.Headers().Map()
+
+	for val, key := range heads.Map() {
+		skey, ok := key.(string)
+
+		if !ok {
+			return
+		}
+
+		if list, ok := val.([]string); ok {
+
+			if old, ok := reply.Headers[skey].([]string); ok {
+				old = append(old, list...)
+				reply.Headers[skey] = old
+			} else {
+				reply.Headers[skey] = list
+			}
+		} else {
+			reply.Headers[skey] = val
+		}
+	}
 
 	for key, _ := range r.Procotol {
 		if key != "jsonp" {
@@ -286,13 +319,29 @@ func (r *XHRMirror) Init() {
 				}
 			}
 
-			r.InStream.Send(&MessagePack{"body", total, data, 2})
+			r.Reader().Send(&MessagePack{"body", total, data, 2})
+			fmt.Println("xhr-instream-size:", r.Reader().Size(), r.Reader(), r.Reader().Buffer, r.Reader() == r.InStream)
 		}
 	}
 }
 
 func (r *XHRMirror) End() {
 	buffer := []byte{}
+	heads := r.Headers()
+
+	for val, key := range heads.Map() {
+		skey, ok := key.(string)
+
+		if !ok {
+			return
+		}
+
+		if list, ok := val.([]string); ok {
+			r.res.Header().Add(skey, strings.Join(list, ";"))
+		} else {
+			r.res.Header().Set(skey, goutils.MorphString.Morph(val))
+		}
+	}
 
 	r.Writer().Receive(func(d interface{}) {
 		m, ok := d.(*MessagePack)
@@ -373,7 +422,7 @@ func (r *WebSocketMirror) Init() {
 
 			packet := &MessagePack{"Socket", nil, mesg, mtype}
 			r.Reader().Send(packet)
-			r.Reader().Stream()
+			// r.Reader().Stream()
 		}
 	}()
 }
@@ -411,7 +460,7 @@ func IsWebSocketRequest(r *http.Request) bool {
 }
 
 func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestGlass {
-	reqmirror := &RequestMirror{rw, r, make(map[string]interface{}), evroll.NewStream(false), evroll.NewStream(false), false}
+	reqmirror := &RequestMirror{rw, r, evroll.NewStream(false, false), evroll.NewStream(false, true), goutils.NewMap(), false}
 	query, _ := url.ParseQuery(r.URL.RawQuery)
 	cbName := "callback"
 
@@ -446,11 +495,16 @@ func CreateTransport(rw http.ResponseWriter, r *http.Request, u *Unify) RequestG
 	return RequestGlass(&XHRMirror{1, reqmirror, u.Protocols})
 }
 
-func (u *Unify) Serve(rw http.ResponseWriter, r *http.Request) {
+func (u *Unify) Transform(rw http.ResponseWriter, r *http.Request) *Unified {
 	glass := CreateTransport(rw, r, u)
 	ui := &Unified{u.Protocols, make(map[string]interface{}), glass}
-	glass.Init()
-	u.Activator(ui)
+	ui.Init()
+	return ui
+}
+
+func (u *Unify) Serve(rw http.ResponseWriter, r *http.Request) {
+	uz := u.Transform(rw, r)
+	u.Activator(uz)
 }
 
 func (u *Unify) ServeHTTP(rw http.ResponseWriter, r *http.Request) {

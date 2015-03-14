@@ -333,13 +333,50 @@
                   self.handleReply.apply(self,args);
                 };
 
+                this.$secure("__frameLoad",function(e){
+                    this.submitDoc.frame.onload = null;
+                    this.submitDoc.frame.onreadystatechange = null;
+                    var content = this.submitDoc.frame.contentDocument;
+                    if(content){
+                        var data = content.getElementsByTagName("pre");
+                        if(data){
+                            this.handleReply({ payload: data });
+                        }
+                    }
+                    this.submitDoc.form.removeChild(this.submitDoc.frame);
+                });
+
+                this.$secure("createFrame",function(){
+                    if(!this.submitDoc) this.createWriter();
+                    var iframe, id = this.submitDoc.form.target;
+
+                    try{
+                        html = _.Util.String(' ',"<iframe","id=",_.funcs.singleQuote(id),"src='javascript:0'",">");
+                        iframe = doc.createElement(html);
+                    }catch(e){
+                        iframe = doc.createElement("iframe");
+                        iframe.src=("javascript:0");
+                        iframe.name=id;
+                    }
+
+                    if(iframe.attachEvent){
+                        iframe.onreadystatechange = function(e){
+                            if(iframe.readyState == "complete"){
+                                this.__frameLoad(e);
+                            };
+                        };
+                    }else{
+                      iframe.onload = this.__frameLoad;
+                    }
+
+                    this.submitDoc.form.appendChild(iframe);
+                });
+
                 this.$secure("createWriter",function(){
                     if(_.valids.not.exists(this.submitDoc)){
                         var form = doc.createElement("form");
                         var area = doc.createElement("textarea");
                         var id = "unify_writer";
-                        var ftag = '<iframe src="javascript:0" name="'+ id + '" >';
-                        var iframe = doc.createElement(ftag);
 
                         form.className="json_writer";
                         form.target=id;
@@ -350,12 +387,12 @@
                         form.method="POST";
                         form.setAttribute("accept-charset","utf-8");
                         area.name = 'd';
+
                         form.appendChild(area);
 
                         this.submitDoc = { form: form, area: area };
                         doc.body.appendChild(form);
                     }
-
 
                     this.submitDoc.form.action = this.makeURL();
                 });
@@ -373,6 +410,7 @@
                     }else{
                         var data = "";
                         this.createWriter();
+                        this.createFrame();
                         this.submitDoc.area.value = "";
 
                         _.enums.each(this.buffer,this.$bind(function(e,i,o,fx){
@@ -393,9 +431,11 @@
                 this.$secure("handleReply",function(data){
                     var upgrades = data.Upgrades,
                         payload = data.Payload;
+                        headers = data.headers;
 
+                    this.headers = headers;
                     this.__update(upgrades);
-                    map.fn.call(null,payload);
+                    map.fn.call(null,payload,headers);
                     this.emit("done",this.connection);
                 });
 
